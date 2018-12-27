@@ -38,7 +38,7 @@ func ServeWs(hub *defs.Hub, w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 		return
 	}
-	client := &defs.Client{Hub: hub, Conn: conn, Send: make(chan []byte, 256)}
+	client := &defs.Client{Hub: hub, Conn: conn, Send: make(chan defs.SendFormat, 256)}
 	client.AddClient()
 	client.Hub.Register <- client
 

@@ -84,6 +84,26 @@ window.onload = function () {
         item.innerHTML = "<b>Your browser does not support WebSockets.</b>";
         appendLog(item);
     }
+
+    document.getElementById("reset-open").onclick=function (ev) {
+        conn = new WebSocket("ws://" + document.location.host + "/ws");
+        conn.onclose = function (evt) {
+            var item = document.createElement("div");
+            item.innerHTML = "<b>Connection closed.</b>";
+            appendLog(item);
+        };
+        conn.onmessage = function (evt) {
+            var messages = evt.data.split('\n');
+            for (var i = 0; i < messages.length; i++) {
+                var item = document.createElement("div");
+                item.innerText = messages[i];
+                appendLog(item);
+            }
+        };
+        conn.onopen = function (ev) {
+            console.log(ev);
+        }
+    }
 };
 </script>
 <style type="text/css">
@@ -146,6 +166,7 @@ body {
     <label for="">用户名<input type="text" id="name" name="name"  value="cpj"></label>
     <label for="">密码<input type="text" id="pwd" name="pwd" value="123"></label>
     <input type="submit" value="Send">
+    <input type="button" value="重新连接" id="reset-open">
 </form>
 </body>
 </html>

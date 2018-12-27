@@ -22,4 +22,6 @@ func Log() {
 
 	//测试
 	log.SetLogger("file", logConfig)
+	log.EnableFuncCallDepth(true)
+	log.Async()
 }

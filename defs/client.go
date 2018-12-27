@@ -5,13 +5,13 @@
 package defs
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
+	"log"
 	"time"
 
 	 "github.com/astaxie/beego/logs"
 	"github.com/gorilla/websocket"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -34,8 +34,6 @@ var (
 )
 
 
-
-
 // Client is a middleman between the websocket connection and the hub.
 type Client struct {
 	Hub *Hub
@@ -46,35 +44,28 @@ type Client struct {
 	Name string
 
 	// Buffered channel of outbound messages.
-	Send chan []byte
+	Send chan SendFormat
 	Error  error
 }
 
-// readPump pumps messages from the websocket connection to the hub.
-//
-// The application runs readPump in a per-connection goroutine. The application
-// ensures that there is at most one reader on a connection by executing all
 // reads from this goroutine.
 func (c *Client) ReadPump() {
 	defer func() {
-		c.Hub.Rnregister <- c
+		c.Hub.UnRegister <- c
 		c.Conn.Close()
 	}()
 	c.Conn.SetReadLimit(maxMessageSize)
 	c.Conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.Conn.SetPongHandler(func(string) error { c.Conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
 	for {
-		_, message, err := c.Conn.ReadMessage()
-		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				logs.Error("error: ", err)
-			}
+		sendFormat := SendFormat{}
+		if e := c.Conn.ReadJSON(&sendFormat);e!=nil {
+			logs.Error(" 读取的json 格 式不正确 error %v  data: %v",e,sendFormat)
+			c.Send<-NewSendError(ERROR_BAD_MSG_FORMAT)
 			break
 		}
-		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
 		//accept
-		logs.Debug(string(message))
-		c.Hub.Broadcast <- message
+		c.Hub.Broadcast <- sendFormat
 	}
 }
 
@@ -93,19 +84,21 @@ func (c *Client) WritePump() {
 				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-
 			w, err := c.Conn.NextWriter(websocket.TextMessage)
 			if err != nil {
 				logs.Error("NextWriter ",err)
 				return
 			}
-			w.Write(message)
-
+			w.Write(message.Marshal())
 			// Add queued chat messages to the current websocket message.
 			n := len(c.Send)
 			for i := 0; i < n; i++ {
 				w.Write(newline)
-				w.Write(<-c.Send)
+				msg :=<-c.Send
+				_, err := w.Write(msg.Marshal())
+				if err != nil {
+					c.Send<-NewSendSuccess(OKEY_MSG)
+				}
 			}
 			if err := w.Close(); err != nil {
 				logs.Error("w.Close",err)
@@ -129,11 +122,12 @@ func (c *Client) AddClient(){
 		logs.Debug(e)
 	}
 
+	log.Println(data)
 	//如果是 type 1 则是新增连接
 	if data.Type==1{
 		id := Checkuser(data.Name, data.Pwd)
 		if id == "" {
-			c.Error=errors.New(ERROR_VALIDATE)
+			c.Error=errors.New(ERROR_LOGIN)
 			return
 		}
 		c.Id=id

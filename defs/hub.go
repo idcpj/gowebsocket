@@ -5,9 +5,6 @@
 package defs
 
 import (
-	"encoding/json"
-
-
 	"github.com/astaxie/beego/logs"
 )
 
@@ -18,67 +15,85 @@ type Hub struct {
 	clients map[string]*Client
 
 	// Inbound messages from the clients.
-	Broadcast chan []byte
+	Broadcast chan SendFormat
 
 	// Register requests from the clients.
 	Register chan *Client
 
-	// Unregister requests from clients.
-	Rnregister chan *Client
-
+	// UnRegister requests from clients.
+	UnRegister chan *Client
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		Broadcast:  make(chan []byte),
+		Broadcast:  make(chan SendFormat),
 		Register:   make(chan *Client),
-		Rnregister: make(chan *Client),
+		UnRegister: make(chan *Client),
 		clients:    make(map[string]*Client),
 	}
 }
-
 
 func (h *Hub) Run() {
 	for {
 		select {
 		case client := <-h.Register:
 			//注册
-			h.actionRegister(client)
-		case client := <-h.Rnregister:
+			h.switchType(SendFormat{Type: TYPE_LOGIN}, client)
+
+		case client := <-h.UnRegister:
 			//取消注册
-			h.actionUnregister(client)
+			h.doUnregister(client)
 		case message := <-h.Broadcast:
-			SendInfo := SendFormat{}
-			e := json.Unmarshal(message, &SendInfo)
-			if e != nil {
-				logs.Debug(" 发送失败")
-				return
-			}
-			if SendInfo.Type == 2 && SendInfo.SendId!=""{
-				logs.Debug("SendInfo.SendId",SendInfo.SendId)
-				if _,ok:=h.clients[SendInfo.SendId];!ok {
-					logs.Debug("没有找到对应的人")
-					return
-				}
-				h.clients[SendInfo.SendId].Send<-[]byte(SendInfo.Content)
-			}
+			h.switchType(message, nil)
+
 		}
 	}
 }
-func (h *Hub) actionRegister(client *Client) {
-	//验证失败,不注册
-	if client.Error!=nil {
-		client.Send<-[]byte(client.Error.Error())
-		return
-	}
-	h.clients[client.Id] = client
-	client.Send <- []byte("注册成功")
-	logs.Debug("当前在线人数",len(h.clients))
-}
 
-func (h *Hub) actionUnregister(client *Client){
+func (h *Hub) doUnregister(client *Client) {
 	if _, ok := h.clients[client.Id]; ok {
 		delete(h.clients, client.Id)
 		close(client.Send)
 	}
+}
+func (h *Hub) switchType(message SendFormat, client *Client) {
+	switch message.Type {
+	case TYPE_LOGIN:
+		h.doRegister(client)
+	case TYPE_SEND_ID:
+		h.doSendID(message)
+	}
+}
+
+func (h *Hub) doRegister(client *Client) {
+
+	if client == nil { //注册失败时,再次注册,client 为空,则走此流程
+		return
+	} else if client.Error != nil {
+		logs.Error("注册失败 ", client.Error)
+		client.Send <- NewSendError(client.Error.Error())
+	} else {
+		//成功
+		h.clients[client.Id] = client
+		client.Send <- NewSendSuccess(OKEY_LOGIN)
+		logs.Debug("当前在线人数", len(h.clients))
+	}
+}
+
+func (h *Hub) doSendID(message SendFormat) {
+	if message.SendId == "" {
+		h.clients[message.ClientId].Send <- message
+		logs.Debug("没有 send_id")
+		return
+	}
+
+	logs.Debug("message.SendId", message.SendId)
+
+	if _, ok := h.clients[message.SendId]; !ok {
+		message.Response = ERROR_NO_CLIENT_ID
+		h.clients[message.ClientId].Send <- message
+		logs.Debug("没有找到对应的人")
+		return
+	}
+	h.clients[message.SendId].Send <- message
 }
